@@ -1,4 +1,5 @@
 import pg from "pg";
+import type { QueryResult, QueryResultRow } from "pg";
 import { config } from "./config.js";
 
 // One pool for the whole process.
@@ -14,6 +15,13 @@ export const pool = new pg.Pool({
 pool.on("error", (err) => {
   console.error("Idle Postgres connection failed:", err.message);
 });
+
+export interface Db {
+  query<R extends QueryResultRow = QueryResultRow>(
+    text: string,
+    values?: unknown[],
+  ): Promise<QueryResult<R>>;
+}
 
 // Round trip to the database. Throws if Postgres can't be reached.
 export async function pingDb(): Promise<number> {

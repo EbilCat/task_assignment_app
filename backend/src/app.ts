@@ -1,6 +1,7 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import { requestLog } from "./middleware/requestLog.js";
 import { healthRouter } from "./routes/health.js";
+import { tasksRouter } from "./routes/tasks.js";
 
 export function buildApp() {
   const app = express();
@@ -9,8 +10,9 @@ export function buildApp() {
   app.use(requestLog);
   app.use(express.json());
 
-  // 2. routes, only /health for now
+  // 2. routes (one router per resource; each lives in src/routes/)
   app.use(healthRouter);
+  app.use(tasksRouter);
 
   // 3. nothing matched: throw 404
   app.use((req, res) => {
@@ -36,4 +38,3 @@ export function buildApp() {
 function isBadJson(err: unknown): boolean {
   return typeof err === "object" && err !== null && "type" in err && err.type === "entity.parse.failed";
 }
-
