@@ -43,3 +43,13 @@ export async function listDevelopers(db: Db): Promise<DeveloperWithSkills[]> {
   );
   return rows;
 }
+
+
+export async function findExistingDeveloperIds(db: Db, ids: number[]): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const { rows } = await db.query<{ id: number }>(
+    `SELECT id FROM developers WHERE id = ANY($1::int[])`,
+    [ids],
+  );
+  return rows.map((r) => r.id);
+}

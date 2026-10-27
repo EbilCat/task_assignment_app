@@ -9,3 +9,13 @@ export async function listSkills(db: Db): Promise<SkillRow[]> {
   );
   return rows;
 }
+
+
+export async function findSkillsByNames(db: Db, names: string[]): Promise<SkillRow[]> {
+  if (names.length === 0) return [];
+  const { rows } = await db.query<SkillRow>(
+    `SELECT id, name FROM skills WHERE name = ANY($1::text[])`,
+    [names],
+  );
+  return rows;
+}

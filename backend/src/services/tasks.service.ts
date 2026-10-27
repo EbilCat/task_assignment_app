@@ -1,4 +1,6 @@
-import { pool } from "../db.js";
+import { pool, withTransaction, type Db } from "../db.js";
+import * as skillsRepo from "../repositories/skills.repo.js";
+import type { CreateTaskInput } from "../schemas/tasks.schema.js";
 import * as tasksRepo from "../repositories/tasks.repo.js";
 import * as developersRepo from "../repositories/developers.repo.js";
 import type { DeveloperSummary } from "../repositories/developers.repo.js";
@@ -45,4 +47,96 @@ export async function getTaskTree(taskId: number): Promise<Task | null> {
 // buildTaskTree takes skills as a Map keyed by task id.
 function skillsByTask(rows: TaskRowWithSkills[]): Map<number, string[]> {
   return new Map(rows.map((r) => [r.id, r.skills]));
+}
+
+
+// ---- create ---------------------------------------------------------------
+
+// Why a create was refused, pointing at the offending field with the same
+// dotted path style as zod ("subtasks.1.skills.0").
+export type CreateTaskProblem = { path: string; message: string };
+export type CreateTaskResult =
+  | { ok: true; task: Task }
+  | { ok: false; problem: CreateTaskProblem };
+
+// Create a task and its whole subtask tree.
+//  1. Check the facts zod can't (do these skills / developers exist?) with
+//     two queries for the whole tree, BEFORE opening a transaction.
+//  2. Insert every row inside one transaction: all of them or none.
+//  3. Read the new tree back the same way GET /tasks/:id does.
+export async function createTask(input: CreateTaskInput): Promise<CreateTaskResult> {
+  const nodes = flatten(input);
+
+  // 1a. skills: one lookup for every distinct name in the tree
+  const names = [...new Set(nodes.flatMap(({ node }) => node.skills ?? []))];
+  const skills = await skillsRepo.findSkillsByNames(pool, names);
+  const skillIdByName = new Map(skills.map((s) => [s.name, s.id]));
+  for (const { path, node } of nodes) {
+    for (const [i, name] of (node.skills ?? []).entries()) {
+      if (!skillIdByName.has(name)) {
+        return fail(join(path, `skills.${i}`), `Unknown skill "${name}"`);
+      }
+    }
+  }
+
+  // 1b. assignees: one lookup for every distinct id in the tree
+  const ids = [...new Set(nodes.flatMap(({ node }) => (node.assigneeId == null ? [] : [node.assigneeId])))];
+  const existing = new Set(await developersRepo.findExistingDeveloperIds(pool, ids));
+  for (const { path, node } of nodes) {
+    if (node.assigneeId != null && !existing.has(node.assigneeId)) {
+      return fail(join(path, "assigneeId"), `Developer ${node.assigneeId} not found`);
+    }
+  }
+
+  // 2. all rows or none
+  const rootId = await withTransaction((db) => insertTree(db, input, null, skillIdByName));
+
+  // 3. committed, so a normal pool query sees it
+  const task = await getTaskTree(rootId);
+  if (!task) throw new Error(`Task ${rootId} missing right after insert`);
+  return { ok: true, task };
+}
+
+// Depth-first: insert the parent, use its new id as the children's
+// parent_task_id. Awaited one by one: a transaction is one connection, and
+// one connection runs one query at a time anyway.
+async function insertTree(
+  db: Db,
+  node: CreateTaskInput,
+  parentTaskId: number | null,
+  skillIdByName: Map<string, number>,
+): Promise<number> {
+  const id = await tasksRepo.insertTask(db, {
+    title: node.title,
+    status: node.status ?? "To Do",
+    assigneeId: node.assigneeId ?? null,
+    parentTaskId,
+  });
+  const skillIds = (node.skills ?? []).flatMap((name) => {
+    const skillId = skillIdByName.get(name);
+    return skillId === undefined ? [] : [skillId];
+  });
+  await tasksRepo.insertTaskSkills(db, id, skillIds);
+  for (const child of node.subtasks ?? []) {
+    await insertTree(db, child, id, skillIdByName);
+  }
+  return id;
+}
+
+// Every node of the input tree with its path: "" for the root,
+// "subtasks.1", "subtasks.1.subtasks.0", ...
+type Located = { path: string; node: CreateTaskInput };
+function flatten(node: CreateTaskInput, path = ""): Located[] {
+  const children = (node.subtasks ?? []).flatMap((child, i) =>
+    flatten(child, join(path, `subtasks.${i}`)),
+  );
+  return [{ path, node }, ...children];
+}
+
+function join(path: string, key: string): string {
+  return path ? `${path}.${key}` : key;
+}
+
+function fail(path: string, message: string): CreateTaskResult {
+  return { ok: false, problem: { path, message } };
 }

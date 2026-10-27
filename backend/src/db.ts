@@ -29,3 +29,30 @@ export async function pingDb(): Promise<number> {
   await pool.query("SELECT 1");
   return Math.round(performance.now() - start);
 }
+
+// Run `work` inside ONE transaction on ONE connection.
+// Every query in `work` must use the `db` it is given (never `pool`), because
+// BEGIN/COMMIT only cover queries sent on the same connection.
+//   resolves -> COMMIT, returns work's result
+//   throws   -> ROLLBACK, rethrows the original error
+// The connection always goes back to the pool (finally), and is destroyed
+// instead if even ROLLBACK failed (it is probably broken).
+export async function withTransaction<T>(work: (db: Db) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  let broken = false;
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      broken = true;
+    }
+    throw err;
+  } finally {
+    client.release(broken); // release(true) destroys the connection
+  }
+}

@@ -1,5 +1,14 @@
 import type { Db } from "../db.js";
 import type { TaskRow } from "../domain.js";
+import type { TaskStatus } from "../types.js";
+
+
+export type NewTask = {
+  title: string;
+  status: TaskStatus;
+  assigneeId: number | null;
+  parentTaskId: number | null;
+};
 
 
 export async function findTaskById(db: Db, id: number): Promise<TaskRow | null> {
@@ -73,4 +82,27 @@ export async function listSubtreeWithSkills(db: Db, rootId: number): Promise<Tas
     [rootId],
   );
   return rows;
+}
+
+
+export async function insertTask(db: Db, task: NewTask): Promise<number> {
+  const { rows } = await db.query<{ id: number }>(
+    `INSERT INTO tasks (title, status, assignee_id, parent_task_id)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [task.title, task.status, task.assigneeId, task.parentTaskId],
+  );
+  const row = rows[0];
+  if (!row) throw new Error("INSERT ... RETURNING returned no row");
+  return row.id;
+}
+
+
+export async function insertTaskSkills(db: Db, taskId: number, skillIds: number[]): Promise<void> {
+  if (skillIds.length === 0) return;
+  await db.query(
+    `INSERT INTO task_skills (task_id, skill_id)
+     SELECT $1, unnest($2::int[])`,
+    [taskId, skillIds],
+  );
 }
