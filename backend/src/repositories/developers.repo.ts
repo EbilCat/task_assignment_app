@@ -20,3 +20,26 @@ export async function findQualifiedForTask(db: Db, taskId: number): Promise<Deve
   );
   return rows;
 }
+
+
+export type DeveloperWithSkills = { id: number; name: string; skills: string[] };
+
+// Every developer with their skill names, in ONE query.
+// LEFT JOIN keeps a developer who has no skills yet. For that developer the
+// join produces a single row with s.name = NULL; FILTER drops it, and
+// COALESCE turns the resulting NULL array into an empty one.
+export async function listDevelopers(db: Db): Promise<DeveloperWithSkills[]> {
+  const { rows } = await db.query<DeveloperWithSkills>(
+    `SELECT d.id, d.name,
+            COALESCE(
+              array_agg(s.name ORDER BY s.name) FILTER (WHERE s.id IS NOT NULL),
+              '{}'
+            ) AS skills
+       FROM developers d
+       LEFT JOIN developer_skills ds ON ds.developer_id = d.id
+       LEFT JOIN skills s            ON s.id = ds.skill_id
+      GROUP BY d.id
+      ORDER BY d.id`,
+  );
+  return rows;
+}

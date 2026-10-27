@@ -2,6 +2,8 @@ import express, { type Request, type Response, type NextFunction } from "express
 import { requestLog } from "./middleware/requestLog.js";
 import { healthRouter } from "./routes/health.js";
 import { tasksRouter } from "./routes/tasks.js";
+import { developersRouter } from "./routes/developers.js";
+import { skillsRouter } from "./routes/skills.js";
 
 export function buildApp() {
   const app = express();
@@ -13,6 +15,8 @@ export function buildApp() {
   // 2. routes (one router per resource; each lives in src/routes/)
   app.use(healthRouter);
   app.use(tasksRouter);
+  app.use(developersRouter);
+  app.use(skillsRouter);
 
   // 3. nothing matched: throw 404
   app.use((req, res) => {
