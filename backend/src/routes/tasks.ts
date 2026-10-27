@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import * as tasksService from "../services/tasks.service.js";
-import { CreateTaskBody, TaskIdParams, AssignBody } from "../schemas/tasks.schema.js";
+import { CreateTaskBody, TaskIdParams, AssignBody, UpdateStatusBody } from "../schemas/tasks.schema.js";
 import { problemBody, validationError } from "../validation.js";
 
 export const tasksRouter = Router();
@@ -74,7 +74,8 @@ tasksRouter.post("/tasks", async (req, res) => {
     const { code, path, message } = result.problem;
     // 400: the body refers to something that doesn't exist
     // 422: everything exists, but the request breaks a business rule
-    res.status(code === "NOT_QUALIFIED" ? 422 : 400).json(problemBody(code, path, message));
+    //      (NOT_QUALIFIED = rule 1, SUBTASKS_NOT_DONE = rule 2)
+    res.status(code === "BAD_REQUEST" ? 400 : 422).json(problemBody(code, path, message));
     return;
   }
 
@@ -106,6 +107,35 @@ tasksRouter.patch("/tasks/:id/assignee", async (req, res) => {
       return;
     case "not_qualified":
       res.status(422).json(problemBody("NOT_QUALIFIED", "assigneeId", result.message));
+      return;
+  }
+});
+
+
+// Rule 2 on an existing task. Body: { "status": "Done" } (or "To Do" / "In Progress").
+tasksRouter.patch("/tasks/:id/status", async (req, res) => {
+  const taskId = parseTaskId(req, res);
+  if (taskId === null) return;
+
+  const parsed = UpdateStatusBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json(validationError(parsed.error));
+    return;
+  }
+
+  const result = await tasksService.changeStatus(taskId, parsed.data.status);
+  switch (result.kind) {
+    case "ok":
+      res.json({ task: result.task });
+      return;
+    case "task_not_found":
+      res.status(404).json(taskNotFound(taskId));
+      return;
+    case "subtasks_not_done":
+      res.status(422).json(problemBody("SUBTASKS_NOT_DONE", "status", result.message));
+      return;
+    case "parent_done":
+      res.status(422).json(problemBody("PARENT_DONE", "status", result.message));
       return;
   }
 });

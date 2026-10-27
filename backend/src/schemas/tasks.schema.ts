@@ -39,3 +39,11 @@ export type CreateTaskInput = z.infer<typeof CreateTaskBody>;
 export const AssignBody = z.strictObject({
   assigneeId: z.number().int().positive().nullable(),
 });
+
+
+// The body of PATCH /tasks/:id/status. status is REQUIRED and must be one of
+// TASK_STATUSES: { "status": "Done" }. Whether the move is ALLOWED (rule 2)
+// is the service's job.
+export const UpdateStatusBody = z.strictObject({
+  status: TaskStatusSchema,
+});

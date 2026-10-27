@@ -7,7 +7,8 @@ import type { DeveloperSummary } from "../repositories/developers.repo.js";
 import type { TaskRowWithSkills } from "../repositories/tasks.repo.js";
 import type { Task } from "../domain.js";
 import { buildTaskTree } from "../tree.js";
-import { missingSkills, notQualifiedMessage } from "../rules.js";
+import { countUnfinishedBelow, missingSkills, notQualifiedMessage, parentDoneMessage, subtasksNotDoneMessage } from "../rules.js";
+import type { TaskStatus } from "../types.js";
 
 
 export async function getQualifiedDevelopers(taskId: number): Promise<DeveloperSummary[] | null> {
@@ -86,13 +87,50 @@ export async function assignTask(taskId: number, assigneeId: number | null): Pro
 }
 
 
+// ---- status ---------------------------------------------------------------
+
+// Every way PATCH /tasks/:id/status can end (same pattern as AssignResult).
+export type StatusResult =
+  | { kind: "ok"; task: Task }
+  | { kind: "task_not_found" }
+  | { kind: "subtasks_not_done"; message: string; unfinished: number }
+  | { kind: "parent_done"; message: string; parentId: number };
+
+// Rule 2 for an EXISTING task, in both directions:
+//  - moving TO Done: every descendant must already be Done
+//  - moving AWAY from Done (or staying not Done): no ancestor may be Done,
+//    otherwise that ancestor would be Done with an unfinished subtask
+export async function changeStatus(taskId: number, status: TaskStatus): Promise<StatusResult> {
+  const task = await tasksRepo.findTaskById(pool, taskId);
+  if (!task) return { kind: "task_not_found" };
+
+  if (status === "Done") {
+    const unfinished = await tasksRepo.countUnfinishedDescendants(pool, taskId);
+    if (unfinished > 0) {
+      return { kind: "subtasks_not_done", message: subtasksNotDoneMessage(unfinished), unfinished };
+    }
+  } else {
+    const parent = await tasksRepo.findNearestDoneAncestor(pool, taskId);
+    if (parent) {
+      return { kind: "parent_done", message: parentDoneMessage(parent.id, parent.title), parentId: parent.id };
+    }
+  }
+
+  await tasksRepo.updateStatus(pool, taskId, status);
+  const updated = await getTaskTree(taskId);
+  if (!updated) return { kind: "task_not_found" }; // deleted in between
+  return { kind: "ok", task: updated };
+}
+
+
 // ---- create ---------------------------------------------------------------
 
 // Why a create was refused, pointing at the offending field with the same
 // dotted path style as zod ("subtasks.1.skills.0").
 //   BAD_REQUEST   the body names something that doesn't exist (400)
-//   NOT_QUALIFIED rule 1: the assignee lacks a required skill (422)
-export type ProblemCode = "BAD_REQUEST" | "NOT_QUALIFIED";
+//   NOT_QUALIFIED     rule 1: the assignee lacks a required skill (422)
+//   SUBTASKS_NOT_DONE rule 2: a node is Done but something below it isn't (422)
+export type ProblemCode = "BAD_REQUEST" | "NOT_QUALIFIED" | "SUBTASKS_NOT_DONE";
 export type CreateTaskProblem = { code: ProblemCode; path: string; message: string };
 export type CreateTaskResult =
   | { ok: true; task: Task }
@@ -134,8 +172,17 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
       return fail(join(path, "assigneeId"), notQualifiedMessage(developer.name, missing), "NOT_QUALIFIED");
     }
   }
-
   
+  // 1d. rule 2, per node: a Done node needs every node below it Done.
+  //     No query: the whole new tree is in the body. (A new task is always
+  //     a root, so there is no saved parent to check.)
+  for (const { path, node } of nodes) {
+    if (node.status !== "Done") continue;
+    const unfinished = countUnfinishedBelow(node);
+    if (unfinished > 0) {
+      return fail(join(path, "status"), subtasksNotDoneMessage(unfinished), "SUBTASKS_NOT_DONE");
+    }
+  }
 
   // 2. all rows or none
   const rootId = await withTransaction((db) => insertTree(db, input, null, skillIdByName));

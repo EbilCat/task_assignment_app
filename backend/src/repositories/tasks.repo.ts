@@ -131,3 +131,41 @@ export async function updateAssignee(db: Db, taskId: number, assigneeId: number 
   );
   return (rowCount ?? 0) > 0;
 }
+
+
+// The closest task ABOVE this one whose status is Done, or null if no
+// ancestor is Done. The recursion walks UP: start at the parent, then the
+// parent's parent, ... `depth` lets us pick the nearest one.
+export async function findNearestDoneAncestor(
+  db: Db,
+  taskId: number,
+): Promise<{ id: number; title: string } | null> {
+  const { rows } = await db.query<{ id: number; title: string }>(
+    `WITH RECURSIVE ancestors AS (
+       SELECT p.id, p.title, p.status, p.parent_task_id, 1 AS depth
+         FROM tasks c
+         JOIN tasks p ON p.id = c.parent_task_id
+        WHERE c.id = $1
+       UNION ALL
+       SELECT p.id, p.title, p.status, p.parent_task_id, a.depth + 1
+         FROM tasks p
+         JOIN ancestors a ON p.id = a.parent_task_id
+     )
+     SELECT id, title
+       FROM ancestors
+      WHERE status = 'Done'
+      ORDER BY depth
+      LIMIT 1`,
+    [taskId],
+  );
+  return rows[0] ?? null;
+}
+
+// Set a task's status. Returns false if no row matched.
+export async function updateStatus(db: Db, taskId: number, status: TaskStatus): Promise<boolean> {
+  const { rowCount } = await db.query(
+    `UPDATE tasks SET status = $2 WHERE id = $1`,
+    [taskId, status],
+  );
+  return (rowCount ?? 0) > 0;
+}
