@@ -1,141 +1,90 @@
-import { Router, type Request, type Response } from "express";
+import { Router } from "express";
 import * as tasksService from "../services/tasks.service.js";
-import { CreateTaskBody, TaskIdParams, AssignBody, UpdateStatusBody } from "../schemas/tasks.schema.js";
-import { problemBody, validationError } from "../validation.js";
+import { AssignBody, CreateTaskBody, TaskIdParams, UpdateStatusBody } from "../schemas/tasks.schema.js";
+import { parse } from "../validation.js";
+import { assertNever, fieldError, notFound } from "../errors.js";
 
 export const tasksRouter = Router();
 
+// Routes translate HTTP <-> service calls: parse input (parse() throws a 400),
+// call one service function, then send the success response or THROW an
+// ApiError. The error handler in app.ts writes every error response; no
+// route calls res.status(4xx) any more.
 
-////////////////
-//* Functions
-////////////////
-function taskNotFound(taskId: number) {
-  return { error: { code: "NOT_FOUND", message: `Task ${taskId} not found` } };
-}
+const taskNotFound = (taskId: number) => notFound(`Task ${taskId} not found`);
 
-// Validates req.params with zod. On failure it sends the 400 itself and
-// returns null, so each handler only needs `if (taskId === null) return;`.
-function parseTaskId(req: Request, res: Response): number | null {
-  const parsed = TaskIdParams.safeParse(req.params);
-  if (!parsed.success) {
-    res.status(400).json(validationError(parsed.error));
-    return null;
-  }
-  return parsed.data.id;
-}
-
-
-////////////////
-//* Routes
-////////////////
 tasksRouter.get("/tasks", async (_req, res) => {
   const tasks = await tasksService.listTaskTree();
   res.json({ tasks });
 });
 
-tasksRouter.get("/tasks/:id", async (req, res) => {
-  const taskId = parseTaskId(req, res);
-  if (taskId === null) return;
-
-  const task = await tasksService.getTaskTree(taskId);
-  if (task === null) {
-    res.status(404).json(taskNotFound(taskId));
-    return;
-  }
-
-  res.json({ task });
-});
-
-tasksRouter.get("/tasks/:id/qualified-developers", async (req, res) => {
-  const taskId = parseTaskId(req, res);
-  if (taskId === null) return;
-
-  const developers = await tasksService.getQualifiedDevelopers(taskId);
-  if (developers === null) {
-    res.status(404).json(taskNotFound(taskId));
-    return;
-  }
-
-  res.json({ taskId, developers });
-});
-
-
 tasksRouter.post("/tasks", async (req, res) => {
   // shape: zod (req.body is undefined without Content-Type: application/json,
   // which zod also rejects with a 400)
-  const parsed = CreateTaskBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json(validationError(parsed.error));
-    return;
-  }
+  const body = parse(CreateTaskBody, req.body);
 
-  const result = await tasksService.createTask(parsed.data);
+  // facts + rules + insert: the service
+  const result = await tasksService.createTask(body);
   if (!result.ok) {
     const { code, path, message } = result.problem;
-    // 400: the body refers to something that doesn't exist
-    // 422: everything exists, but the request breaks a business rule
-    //      (NOT_QUALIFIED = rule 1, SUBTASKS_NOT_DONE = rule 2)
-    res.status(code === "BAD_REQUEST" ? 400 : 422).json(problemBody(code, path, message));
-    return;
+    throw fieldError(code, path, message); // 400 or 422: STATUS_BY_CODE decides
   }
 
   res.status(201).location(`/tasks/${result.task.id}`).json({ task: result.task });
 });
 
+tasksRouter.get("/tasks/:id", async (req, res) => {
+  const { id } = parse(TaskIdParams, req.params);
+  const task = await tasksService.getTaskTree(id);
+  if (task === null) throw taskNotFound(id);
+  res.json({ task });
+});
+
+tasksRouter.get("/tasks/:id/qualified-developers", async (req, res) => {
+  const { id } = parse(TaskIdParams, req.params);
+  const developers = await tasksService.getQualifiedDevelopers(id);
+  if (developers === null) throw taskNotFound(id);
+  res.json({ taskId: id, developers });
+});
 
 // Rule 1 on an existing task. Body: { "assigneeId": 3 } or { "assigneeId": null }.
 tasksRouter.patch("/tasks/:id/assignee", async (req, res) => {
-  const taskId = parseTaskId(req, res);
-  if (taskId === null) return;
+  const { id } = parse(TaskIdParams, req.params);
+  const { assigneeId } = parse(AssignBody, req.body);
 
-  const parsed = AssignBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json(validationError(parsed.error));
-    return;
-  }
-
-  const result = await tasksService.assignTask(taskId, parsed.data.assigneeId);
+  const result = await tasksService.assignTask(id, assigneeId);
   switch (result.kind) {
     case "ok":
       res.json({ task: result.task });
       return;
     case "task_not_found":
-      res.status(404).json(taskNotFound(taskId));
-      return;
+      throw taskNotFound(id);
     case "developer_not_found":
-      res.status(400).json(problemBody("BAD_REQUEST", "assigneeId", `Developer ${result.developerId} not found`));
-      return;
+      throw fieldError("BAD_REQUEST", "assigneeId", `Developer ${result.developerId} not found`);
     case "not_qualified":
-      res.status(422).json(problemBody("NOT_QUALIFIED", "assigneeId", result.message));
-      return;
+      throw fieldError("NOT_QUALIFIED", "assigneeId", result.message);
+    default:
+      assertNever(result);
   }
 });
 
-
 // Rule 2 on an existing task. Body: { "status": "Done" } (or "To Do" / "In Progress").
 tasksRouter.patch("/tasks/:id/status", async (req, res) => {
-  const taskId = parseTaskId(req, res);
-  if (taskId === null) return;
+  const { id } = parse(TaskIdParams, req.params);
+  const { status } = parse(UpdateStatusBody, req.body);
 
-  const parsed = UpdateStatusBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json(validationError(parsed.error));
-    return;
-  }
-
-  const result = await tasksService.changeStatus(taskId, parsed.data.status);
+  const result = await tasksService.changeStatus(id, status);
   switch (result.kind) {
     case "ok":
       res.json({ task: result.task });
       return;
     case "task_not_found":
-      res.status(404).json(taskNotFound(taskId));
-      return;
+      throw taskNotFound(id);
     case "subtasks_not_done":
-      res.status(422).json(problemBody("SUBTASKS_NOT_DONE", "status", result.message));
-      return;
+      throw fieldError("SUBTASKS_NOT_DONE", "status", result.message);
     case "parent_done":
-      res.status(422).json(problemBody("PARENT_DONE", "status", result.message));
-      return;
+      throw fieldError("PARENT_DONE", "status", result.message);
+    default:
+      assertNever(result);
   }
 });

@@ -1,11 +1,10 @@
-import type { ZodError } from "zod";
+import { z, type ZodError } from "zod";
+import { ApiError, type IssueDetail } from "./errors.js";
 
-export type IssueDetail = { path: string; message: string };
-
-// Turn zod's issues into our usual error body, plus a `details` list so a
-// frontend can show the message next to the right field.
+// zod's issues -> our ApiError (400 BAD_REQUEST), with a `details` list so a
+// client (our React form) can show each message next to the right field.
 //   path "subtasks.0.title" = the title of the first subtask
-export function validationError(error: ZodError) {
+export function zodToApiError(error: ZodError): ApiError {
   const details: IssueDetail[] = error.issues.map((issue) => ({
     path: issue.path.map(String).join("."),
     message: issue.message,
@@ -16,16 +15,19 @@ export function validationError(error: ZodError) {
     : first.path
       ? `${first.path}: ${first.message}`
       : first.message;
-  return { error: { code: "BAD_REQUEST", message, details } };
+  return new ApiError("BAD_REQUEST", message, details);
 }
 
-
-// The same error body for a problem the SERVICE found, pointing at one field:
-//   problemBody("NOT_QUALIFIED", "subtasks.1.assigneeId", "Alice lacks ...")
-export function problemBody(code: string, path: string, message: string) {
-  return {
-    error: { code, message: path ? `${path}: ${message}` : message, details: [{ path, message }] },
-  };
+// The 400 body for a ZodError
+export function validationError(error: ZodError) {
+  return zodToApiError(error).toBody();
 }
 
-
+// Validate or throw. Routes call this instead of safeParse + if + res.status:
+//   const body = parse(CreateTaskBody, req.body);
+// On failure it throws an ApiError, which the error handler sends as a 400.
+export function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
+  const result = schema.safeParse(input);
+  if (!result.success) throw zodToApiError(result.error);
+  return result.data;
+}

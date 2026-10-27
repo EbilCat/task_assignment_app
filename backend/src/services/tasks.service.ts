@@ -9,6 +9,7 @@ import type { Task } from "../domain.js";
 import { buildTaskTree } from "../tree.js";
 import { countUnfinishedBelow, missingSkills, notQualifiedMessage, parentDoneMessage, subtasksNotDoneMessage } from "../rules.js";
 import type { TaskStatus } from "../types.js";
+import type { ErrorCode } from "../errors.js";
 
 
 export async function getQualifiedDevelopers(taskId: number): Promise<DeveloperSummary[] | null> {
@@ -130,7 +131,7 @@ export async function changeStatus(taskId: number, status: TaskStatus): Promise<
 //   BAD_REQUEST   the body names something that doesn't exist (400)
 //   NOT_QUALIFIED     rule 1: the assignee lacks a required skill (422)
 //   SUBTASKS_NOT_DONE rule 2: a node is Done but something below it isn't (422)
-export type ProblemCode = "BAD_REQUEST" | "NOT_QUALIFIED" | "SUBTASKS_NOT_DONE";
+export type ProblemCode = Extract<ErrorCode, "BAD_REQUEST" | "NOT_QUALIFIED" | "SUBTASKS_NOT_DONE">;
 export type CreateTaskProblem = { code: ProblemCode; path: string; message: string };
 export type CreateTaskResult =
   | { ok: true; task: Task }
