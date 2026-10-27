@@ -45,11 +45,25 @@ export async function listDevelopers(db: Db): Promise<DeveloperWithSkills[]> {
 }
 
 
-export async function findExistingDeveloperIds(db: Db, ids: number[]): Promise<number[]> {
+// The developers with these ids, each with their skill names, in ONE query.
+// Same shape as listDevelopers, filtered by id. Ids that don't exist are
+// simply absent from the result, so this also answers "does developer 42
+// exist?". (Replaces findExistingDeveloperIds.)
+export async function findDevelopersByIds(db: Db, ids: number[]): Promise<DeveloperWithSkills[]> {
   if (ids.length === 0) return [];
-  const { rows } = await db.query<{ id: number }>(
-    `SELECT id FROM developers WHERE id = ANY($1::int[])`,
+  const { rows } = await db.query<DeveloperWithSkills>(
+    `SELECT d.id, d.name,
+            COALESCE(
+              array_agg(s.name ORDER BY s.name) FILTER (WHERE s.id IS NOT NULL),
+              '{}'
+            ) AS skills
+       FROM developers d
+       LEFT JOIN developer_skills ds ON ds.developer_id = d.id
+       LEFT JOIN skills s            ON s.id = ds.skill_id
+      WHERE d.id = ANY($1::int[])
+      GROUP BY d.id
+      ORDER BY d.id`,
     [ids],
   );
-  return rows.map((r) => r.id);
+  return rows;
 }

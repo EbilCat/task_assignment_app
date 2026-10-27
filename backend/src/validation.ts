@@ -18,3 +18,14 @@ export function validationError(error: ZodError) {
       : first.message;
   return { error: { code: "BAD_REQUEST", message, details } };
 }
+
+
+// The same error body for a problem the SERVICE found, pointing at one field:
+//   problemBody("NOT_QUALIFIED", "subtasks.1.assigneeId", "Alice lacks ...")
+export function problemBody(code: string, path: string, message: string) {
+  return {
+    error: { code, message: path ? `${path}: ${message}` : message, details: [{ path, message }] },
+  };
+}
+
+

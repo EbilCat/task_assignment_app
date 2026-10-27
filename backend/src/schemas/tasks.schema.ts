@@ -32,3 +32,10 @@ export const CreateTaskBody = z.strictObject({
 });
 
 export type CreateTaskInput = z.infer<typeof CreateTaskBody>;
+
+
+// The body of PATCH /tasks/:id/assignee. assigneeId is REQUIRED: send a
+// positive integer to assign, or null to unassign. {} is a 400, not "no change".
+export const AssignBody = z.strictObject({
+  assigneeId: z.number().int().positive().nullable(),
+});

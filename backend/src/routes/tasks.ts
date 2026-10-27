@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import * as tasksService from "../services/tasks.service.js";
-import { CreateTaskBody, TaskIdParams } from "../schemas/tasks.schema.js";
-import { validationError } from "../validation.js";
+import { CreateTaskBody, TaskIdParams, AssignBody } from "../schemas/tasks.schema.js";
+import { problemBody, validationError } from "../validation.js";
 
 export const tasksRouter = Router();
 
@@ -71,12 +71,41 @@ tasksRouter.post("/tasks", async (req, res) => {
 
   const result = await tasksService.createTask(parsed.data);
   if (!result.ok) {
-    const { path, message } = result.problem;
-    res.status(400).json({
-      error: { code: "BAD_REQUEST", message: `${path}: ${message}`, details: [{ path, message }] },
-    });
+    const { code, path, message } = result.problem;
+    // 400: the body refers to something that doesn't exist
+    // 422: everything exists, but the request breaks a business rule
+    res.status(code === "NOT_QUALIFIED" ? 422 : 400).json(problemBody(code, path, message));
     return;
   }
 
   res.status(201).location(`/tasks/${result.task.id}`).json({ task: result.task });
+});
+
+
+// Rule 1 on an existing task. Body: { "assigneeId": 3 } or { "assigneeId": null }.
+tasksRouter.patch("/tasks/:id/assignee", async (req, res) => {
+  const taskId = parseTaskId(req, res);
+  if (taskId === null) return;
+
+  const parsed = AssignBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json(validationError(parsed.error));
+    return;
+  }
+
+  const result = await tasksService.assignTask(taskId, parsed.data.assigneeId);
+  switch (result.kind) {
+    case "ok":
+      res.json({ task: result.task });
+      return;
+    case "task_not_found":
+      res.status(404).json(taskNotFound(taskId));
+      return;
+    case "developer_not_found":
+      res.status(400).json(problemBody("BAD_REQUEST", "assigneeId", `Developer ${result.developerId} not found`));
+      return;
+    case "not_qualified":
+      res.status(422).json(problemBody("NOT_QUALIFIED", "assigneeId", result.message));
+      return;
+  }
 });

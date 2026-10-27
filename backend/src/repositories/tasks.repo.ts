@@ -106,3 +106,28 @@ export async function insertTaskSkills(db: Db, taskId: number, skillIds: number[
     [taskId, skillIds],
   );
 }
+
+
+// The names of the skills one task requires, alphabetical. Empty when the
+// task requires none (or does not exist: check that first).
+export async function findTaskSkillNames(db: Db, taskId: number): Promise<string[]> {
+  const { rows } = await db.query<{ name: string }>(
+    `SELECT s.name
+       FROM task_skills ts
+       JOIN skills s ON s.id = ts.skill_id
+      WHERE ts.task_id = $1
+      ORDER BY s.name`,
+    [taskId],
+  );
+  return rows.map((r) => r.name);
+}
+
+
+// Set or clear (null) a task's assignee. Returns false if no row matched.
+export async function updateAssignee(db: Db, taskId: number, assigneeId: number | null): Promise<boolean> {
+  const { rowCount } = await db.query(
+    `UPDATE tasks SET assignee_id = $2 WHERE id = $1`,
+    [taskId, assigneeId],
+  );
+  return (rowCount ?? 0) > 0;
+}

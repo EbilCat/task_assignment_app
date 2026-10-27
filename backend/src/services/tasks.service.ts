@@ -7,6 +7,7 @@ import type { DeveloperSummary } from "../repositories/developers.repo.js";
 import type { TaskRowWithSkills } from "../repositories/tasks.repo.js";
 import type { Task } from "../domain.js";
 import { buildTaskTree } from "../tree.js";
+import { missingSkills, notQualifiedMessage } from "../rules.js";
 
 
 export async function getQualifiedDevelopers(taskId: number): Promise<DeveloperSummary[] | null> {
@@ -50,11 +51,49 @@ function skillsByTask(rows: TaskRowWithSkills[]): Map<number, string[]> {
 }
 
 
+// ---- assign ---------------------------------------------------------------
+
+// Every way PATCH /tasks/:id/assignee can end. The route maps each kind to
+// a status code; the service never sees HTTP.
+export type AssignResult =
+  | { kind: "ok"; task: Task }
+  | { kind: "task_not_found" }
+  | { kind: "developer_not_found"; developerId: number }
+  | { kind: "not_qualified"; message: string; missing: string[] };
+
+// Rule 1 for an EXISTING task: the task's skills come from the database,
+// the developer's skills too, and the same missingSkills() decides.
+// null = unassign, always allowed.
+export async function assignTask(taskId: number, assigneeId: number | null): Promise<AssignResult> {
+  const task = await tasksRepo.findTaskById(pool, taskId);
+  if (!task) return { kind: "task_not_found" };
+
+  if (assigneeId !== null) {
+    const [developer] = await developersRepo.findDevelopersByIds(pool, [assigneeId]);
+    if (!developer) return { kind: "developer_not_found", developerId: assigneeId };
+
+    const required = await tasksRepo.findTaskSkillNames(pool, taskId);
+    const missing = missingSkills(required, developer.skills);
+    if (missing.length > 0) {
+      return { kind: "not_qualified", message: notQualifiedMessage(developer.name, missing), missing };
+    }
+  }
+
+  await tasksRepo.updateAssignee(pool, taskId, assigneeId);
+  const updated = await getTaskTree(taskId);
+  if (!updated) return { kind: "task_not_found" }; // deleted in between
+  return { kind: "ok", task: updated };
+}
+
+
 // ---- create ---------------------------------------------------------------
 
 // Why a create was refused, pointing at the offending field with the same
 // dotted path style as zod ("subtasks.1.skills.0").
-export type CreateTaskProblem = { path: string; message: string };
+//   BAD_REQUEST   the body names something that doesn't exist (400)
+//   NOT_QUALIFIED rule 1: the assignee lacks a required skill (422)
+export type ProblemCode = "BAD_REQUEST" | "NOT_QUALIFIED";
+export type CreateTaskProblem = { code: ProblemCode; path: string; message: string };
 export type CreateTaskResult =
   | { ok: true; task: Task }
   | { ok: false; problem: CreateTaskProblem };
@@ -79,14 +118,24 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
     }
   }
 
-  // 1b. assignees: one lookup for every distinct id in the tree
+  // 1b. assignees: one lookup (with their skills) for every distinct id
   const ids = [...new Set(nodes.flatMap(({ node }) => (node.assigneeId == null ? [] : [node.assigneeId])))];
-  const existing = new Set(await developersRepo.findExistingDeveloperIds(pool, ids));
+  const developers = await developersRepo.findDevelopersByIds(pool, ids);
+  const developerById = new Map(developers.map((d) => [d.id, d]));
   for (const { path, node } of nodes) {
-    if (node.assigneeId != null && !existing.has(node.assigneeId)) {
+    if (node.assigneeId == null) continue; // unassigned is always allowed
+    const developer = developerById.get(node.assigneeId);
+    if (!developer) {
       return fail(join(path, "assigneeId"), `Developer ${node.assigneeId} not found`);
     }
+    // 1c. rule 1, per node: only THIS node's own skills count
+    const missing = missingSkills(node.skills ?? [], developer.skills);
+    if (missing.length > 0) {
+      return fail(join(path, "assigneeId"), notQualifiedMessage(developer.name, missing), "NOT_QUALIFIED");
+    }
   }
+
+  
 
   // 2. all rows or none
   const rootId = await withTransaction((db) => insertTree(db, input, null, skillIdByName));
@@ -137,6 +186,6 @@ function join(path: string, key: string): string {
   return path ? `${path}.${key}` : key;
 }
 
-function fail(path: string, message: string): CreateTaskResult {
-  return { ok: false, problem: { path, message } };
+function fail(path: string, message: string, code: ProblemCode = "BAD_REQUEST"): CreateTaskResult {
+  return { ok: false, problem: { code, path, message } };
 }
