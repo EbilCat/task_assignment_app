@@ -1,3 +1,10 @@
+# docker-compose.yml (repo root)
+# The whole app, one command, from a clean clone (no .env needed):
+#   docker compose up --build        then open http://localhost:8080
+# Published: web on 8080, and Postgres on 5432 (for psql,
+# npm run dev and npm test). The api is reachable only inside the network.
+name: task-assignment   # fixed project name: network is task-assignment_default in any folder
+
 services:
   db:
     image: postgres:16-alpine
@@ -16,6 +23,30 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+
+  api:
+    build: ./backend
+    image: task-assignment-api
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@db:5432/${POSTGRES_DB:-tasks}
+      # Optional: empty key -> inference reports "no_key"; the app still works.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      GEMINI_TIMEOUT_MS: ${GEMINI_TIMEOUT_MS:-8000}
+    depends_on:
+      db:
+        condition: service_healthy   # wait for pg_isready, not just "container started"
+    # no ports: only nginx (web) talks to the API
+
+  web:
+    build: ./frontend
+    image: task-assignment-web
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy   # nginx resolves "api" once, at startup
+        restart: true                # api recreated -> restart web so it re-resolves
 
 volumes:
   pgdata:
