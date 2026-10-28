@@ -8,11 +8,11 @@ import { skillsRouter } from "./routes/skills.js";
 import { ApiError, notFound } from "./errors.js";
 import { zodToApiError } from "./validation.js";
 
-export function buildApp() {
+export function buildApp({ log = true }: { log?: boolean } = {}) {
   const app = express();
 
   // 1. middleware that runs for every request, in this order
-  app.use(requestLog);
+  if (log) app.use(requestLog);
   app.use(express.json());
 
   // 2. routes (one router per resource; each lives in src/routes/)
