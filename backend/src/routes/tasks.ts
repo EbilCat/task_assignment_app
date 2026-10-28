@@ -29,8 +29,9 @@ tasksRouter.post("/tasks", async (req, res) => {
     const { code, path, message } = result.problem;
     throw fieldError(code, path, message); // 400 or 422: STATUS_BY_CODE decides
   }
-
-  res.status(201).location(`/tasks/${result.task.id}`).json({ task: result.task });
+  
+  // inference: what Gemini filled in (or why it couldn't), for the form to show
+  res.status(201).location(`/tasks/${result.task.id}`).json({ task: result.task, inference: result.inference });
 });
 
 tasksRouter.get("/tasks/:id", async (req, res) => {

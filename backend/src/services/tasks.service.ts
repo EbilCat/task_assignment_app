@@ -7,6 +7,8 @@ import type { DeveloperSummary } from "../repositories/developers.repo.js";
 import type { TaskRowWithSkills } from "../repositories/tasks.repo.js";
 import type { Task } from "../domain.js";
 import { buildTaskTree } from "../tree.js";
+import { suggestSkillsForTasks, type SkillQuestion } from "../llm/skills.js";
+import type { LlmFailure } from "../llm/gemini.js";
 import { countUnfinishedBelow, missingSkills, notQualifiedMessage, parentDoneMessage, subtasksNotDoneMessage } from "../rules.js";
 import type { TaskStatus } from "../types.js";
 import type { ErrorCode } from "../errors.js";
@@ -128,28 +130,48 @@ export async function changeStatus(taskId: number, status: TaskStatus): Promise<
 
 // Why a create was refused, pointing at the offending field with the same
 // dotted path style as zod ("subtasks.1.skills.0").
-//   BAD_REQUEST   the body names something that doesn't exist (400)
-//   NOT_QUALIFIED     rule 1: the assignee lacks a required skill (422)
-//   SUBTASKS_NOT_DONE rule 2: a node is Done but something below it isn't (422)
+//   BAD_REQUEST       the body names something that doesn't exist
+//   NOT_QUALIFIED     rule 1: the assignee lacks a required skill
+//   SUBTASKS_NOT_DONE rule 2: a node is Done but something below it isn't
+// Only the code: the HTTP status comes from STATUS_BY_CODE in errors.ts.
 export type ProblemCode = Extract<ErrorCode, "BAD_REQUEST" | "NOT_QUALIFIED" | "SUBTASKS_NOT_DONE">;
 export type CreateTaskProblem = { code: ProblemCode; path: string; message: string };
+
+// What skill inference did for this request. It goes back to the client
+// so the form can say what was suggested, or that suggestions were off.
+//   skipped  every node had skills ticked: no Gemini call was made
+//   ok       Gemini answered; `inferred` lists every node it was asked about
+//   failed   no key / timeout / bad answer: those nodes were saved with NO skills
+export type InferredSkills = { path: string; title: string; skills: string[] };
+export type InferenceReport =
+  | { status: "skipped" }
+  | { status: "ok"; inferred: InferredSkills[]; ms: number }
+  | { status: "failed"; reason: LlmFailure; ms: number };
+
 export type CreateTaskResult =
-  | { ok: true; task: Task }
+  | { ok: true; task: Task; inference: InferenceReport }
   | { ok: false; problem: CreateTaskProblem };
 
-// Create a task and its whole subtask tree.
-//  1. Check the facts zod can't (do these skills / developers exist?) with
-//     two queries for the whole tree, BEFORE opening a transaction.
-//  2. Insert every row inside one transaction: all of them or none.
-//  3. Read the new tree back the same way GET /tasks/:id does.
-export async function createTask(input: CreateTaskInput): Promise<CreateTaskResult> {
-  const nodes = flatten(input);
+// Added to a rule-1 message when the skills came from Gemini, so the user
+// knows why a skill they never ticked is "required".
+const INFERRED_NOTE = " (skills suggested from the title; tick skills yourself to override)";
 
-  // 1a. skills: one lookup for every distinct name in the tree
-  const names = [...new Set(nodes.flatMap(({ node }) => node.skills ?? []))];
-  const skills = await skillsRepo.findSkillsByNames(pool, names);
-  const skillIdByName = new Map(skills.map((s) => [s.name, s.id]));
-  for (const { path, node } of nodes) {
+// Create a task and its whole subtask tree.
+//  1. Cheap checks first, so a request that will fail anyway never costs
+//     a Gemini call: skill names exist, assignees exist, rule 2.
+//  2. Skill inference for nodes with NO skills: one call for the whole tree,
+//     outside any transaction. It never fails the request.
+//  3. Rule 1 against the FINAL skills (ticked or inferred).
+//  4. Insert every row inside one transaction: all of them or none.
+//  5. Read the new tree back the same way GET /tasks/:id does.
+export async function createTask(body: CreateTaskInput): Promise<CreateTaskResult> {
+  const located = flatten(body);
+
+  // 1a. skills: the table is tiny, so load all of it once. It is both the
+  //     name -> id map and the allowed list we give Gemini.
+  const allSkills = await skillsRepo.listSkills(pool);
+  const skillIdByName = new Map(allSkills.map((s) => [s.name, s.id]));
+  for (const { path, node } of located) {
     for (const [i, name] of (node.skills ?? []).entries()) {
       if (!skillIdByName.has(name)) {
         return fail(join(path, `skills.${i}`), `Unknown skill "${name}"`);
@@ -158,26 +180,19 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
   }
 
   // 1b. assignees: one lookup (with their skills) for every distinct id
-  const ids = [...new Set(nodes.flatMap(({ node }) => (node.assigneeId == null ? [] : [node.assigneeId])))];
+  const ids = [...new Set(located.flatMap(({ node }) => (node.assigneeId == null ? [] : [node.assigneeId])))];
   const developers = await developersRepo.findDevelopersByIds(pool, ids);
   const developerById = new Map(developers.map((d) => [d.id, d]));
-  for (const { path, node } of nodes) {
-    if (node.assigneeId == null) continue; // unassigned is always allowed
-    const developer = developerById.get(node.assigneeId);
-    if (!developer) {
+  for (const { path, node } of located) {
+    if (node.assigneeId != null && !developerById.has(node.assigneeId)) {
       return fail(join(path, "assigneeId"), `Developer ${node.assigneeId} not found`);
     }
-    // 1c. rule 1, per node: only THIS node's own skills count
-    const missing = missingSkills(node.skills ?? [], developer.skills);
-    if (missing.length > 0) {
-      return fail(join(path, "assigneeId"), notQualifiedMessage(developer.name, missing), "NOT_QUALIFIED");
-    }
   }
-  
-  // 1d. rule 2, per node: a Done node needs every node below it Done.
+
+  // 1c. rule 2, per node: a Done node needs every node below it Done.
   //     No query: the whole new tree is in the body. (A new task is always
   //     a root, so there is no saved parent to check.)
-  for (const { path, node } of nodes) {
+  for (const { path, node } of located) {
     if (node.status !== "Done") continue;
     const unfinished = countUnfinishedBelow(node);
     if (unfinished > 0) {
@@ -185,13 +200,76 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
     }
   }
 
-  // 2. all rows or none
+  // 2. inference: `input` is a COPY of the body with skills filled in
+  const { input, inference } = await inferMissingSkills(body, allSkills.map((s) => s.name));
+  const inferredPaths = new Set(inference.status === "ok" ? inference.inferred.map((i) => i.path) : []);
+
+  // 3. rule 1, per node: only THIS node's own (final) skills count
+  for (const { path, node } of flatten(input)) {
+    if (node.assigneeId == null) continue; // unassigned is always allowed
+    const developer = developerById.get(node.assigneeId)!; // existence checked in 1b
+    const missing = missingSkills(node.skills ?? [], developer.skills);
+    if (missing.length > 0) {
+      const message = notQualifiedMessage(developer.name, missing) + (inferredPaths.has(path) ? INFERRED_NOTE : "");
+      return fail(join(path, "assigneeId"), message, "NOT_QUALIFIED");
+    }
+  }
+
+  // 4. all rows or none
   const rootId = await withTransaction((db) => insertTree(db, input, null, skillIdByName));
 
-  // 3. committed, so a normal pool query sees it
+  // 5. committed, so a normal pool query sees it
   const task = await getTaskTree(rootId);
   if (!task) throw new Error(`Task ${rootId} missing right after insert`);
-  return { ok: true, task };
+  return { ok: true, task, inference };
+}
+
+// ---- skill inference ------------------------------------------------------
+
+// Nodes with no skills ticked (skills missing or []) are the ones to infer.
+// Returns a copy of the body with their skills filled in, plus a report.
+// Fallback on ANY failure: keep those nodes skill-less (anyone may take
+// them) and log why. A missing key is normal in dev and tests: not logged.
+async function inferMissingSkills(
+  body: CreateTaskInput,
+  allowed: string[],
+): Promise<{ input: CreateTaskInput; inference: InferenceReport }> {
+  const todo = flatten(body).filter(({ node }) => (node.skills ?? []).length === 0);
+  if (todo.length === 0) return { input: body, inference: { status: "skipped" } };
+
+  // Short made-up ids ("T1", "T2", ...) instead of paths: easier for the
+  // model, and they become an enum in the answer schema.
+  const questions: SkillQuestion[] = todo.map(({ node, parent }, i) => ({
+    id: `T${i + 1}`,
+    title: node.title,
+    ...(parent ? { parentTitle: parent.title } : {}),
+  }));
+  const result = await suggestSkillsForTasks(questions, allowed);
+
+  if (!result.ok) {
+    if (result.reason !== "no_key") {
+      console.warn(`[llm] skill inference ${result.reason} after ${result.ms} ms: ${result.message}`);
+    }
+    return { input: body, inference: { status: "failed", reason: result.reason, ms: result.ms } };
+  }
+
+  const skillsByPath = new Map<string, string[]>();
+  const inferred = todo.map(({ path, node }, i) => {
+    const skills = result.data.get(`T${i + 1}`) ?? []; // an id the model left out = no skills
+    skillsByPath.set(path, skills);
+    return { path, title: node.title, skills };
+  });
+  return { input: withSkills(body, skillsByPath), inference: { status: "ok", inferred, ms: result.ms } };
+}
+
+// A copy of the tree with skills replaced where skillsByPath has an entry.
+// The parsed body is never changed in place.
+function withSkills(node: CreateTaskInput, skillsByPath: Map<string, string[]>, path = ""): CreateTaskInput {
+  const copy: CreateTaskInput = { ...node, skills: skillsByPath.get(path) ?? node.skills };
+  if (node.subtasks) {
+    copy.subtasks = node.subtasks.map((child, i) => withSkills(child, skillsByPath, join(path, `subtasks.${i}`)));
+  }
+  return copy;
 }
 
 // Depth-first: insert the parent, use its new id as the children's
@@ -220,14 +298,14 @@ async function insertTree(
   return id;
 }
 
-// Every node of the input tree with its path: "" for the root,
-// "subtasks.1", "subtasks.1.subtasks.0", ...
-type Located = { path: string; node: CreateTaskInput };
-function flatten(node: CreateTaskInput, path = ""): Located[] {
+// Every node of the input tree with its path ("" for the root,
+// "subtasks.1", "subtasks.1.subtasks.0", ...) and its parent (null for the root).
+type Located = { path: string; node: CreateTaskInput; parent: CreateTaskInput | null };
+function flatten(node: CreateTaskInput, path = "", parent: CreateTaskInput | null = null): Located[] {
   const children = (node.subtasks ?? []).flatMap((child, i) =>
-    flatten(child, join(path, `subtasks.${i}`)),
+    flatten(child, join(path, `subtasks.${i}`), node),
   );
-  return [{ path, node }, ...children];
+  return [{ path, node, parent }, ...children];
 }
 
 function join(path: string, key: string): string {

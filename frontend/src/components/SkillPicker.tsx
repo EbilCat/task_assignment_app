@@ -38,7 +38,10 @@ export function SkillPicker({ idPrefix, skills, selected, onChange, error, onDis
           </label>
         );
       })}
-      <small className="hint">None ticked: any developer may take it.</small>
+      <small className="hint">
+        None ticked: the server suggests skills from the title when you create it (if that is off or
+        fails, the task has no skills and any developer may take it).
+      </small>
       {error && <FieldError id={errorId} message={error} onDismiss={onDismissError} />}
     </fieldset>
   );

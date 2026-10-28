@@ -301,3 +301,17 @@ main {
 .node-actions .danger {
   color: var(--error);
 }
+.inference-note {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--card);
+  border-left: 4px solid var(--doing);
+  font-size: 0.9rem;
+}
+.inference-note p {
+  margin: 0;
+}
+.inference-note ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+}

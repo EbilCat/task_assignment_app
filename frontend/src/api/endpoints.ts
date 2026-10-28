@@ -1,5 +1,5 @@
 import { get, send } from "./client";
-import type { CreateTaskInput, Developer, DeveloperSummary, Skill, Task, TaskStatus } from "./types";
+import type { CreateTaskInput, CreateTaskResponse, Developer, DeveloperSummary, Skill, Task, TaskStatus } from "./types";
 
 // One function per backend endpoint. Each unwraps the response object
 // ({ tasks }, { task }, ...) so callers get the data itself.
@@ -18,7 +18,8 @@ export const api = {
       (r) => r.developers,
     ),
 
-  createTask: (input: CreateTaskInput) => send<{ task: Task }>("POST", "/tasks", input).then((r) => r.task),
+  // Not unwrapped: the form needs `inference` (what Gemini suggested) as well as the task.
+  createTask: (input: CreateTaskInput) => send<CreateTaskResponse>("POST", "/tasks", input),
 
   assignTask: (taskId: number, assigneeId: number | null) =>
     send<{ task: Task }>("PATCH", `/tasks/${taskId}/assignee`, { assigneeId }).then((r) => r.task),

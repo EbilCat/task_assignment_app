@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from "react";
 import { describe } from "../api/describe";
 import { useCreateTask, useDevelopers, useSkills } from "../api/queries";
-import type { Task } from "../api/types";
+import type { CreateTaskResponse, Task } from "../api/types";
 import { FieldError } from "../components/FieldError";
 import { TaskFields, type FormContext } from "../components/TaskFields";
 import { countDrafts, emptyDraft, ownsPath, toInput, type TaskDraft } from "../forms/taskDraft";
 import { hrefFor } from "../router";
+import { InferenceNote } from "../components/InferenceNote";
 
 function countTasks(task: Task): number {
   return 1 + task.subtasks.reduce((n, sub) => n + countTasks(sub), 0);
@@ -19,7 +20,7 @@ export function TaskCreatePage() {
   const developers = useDevelopers();
   const create = useCreateTask();
   const [draft, setDraft] = useState<TaskDraft>(emptyDraft);
-  const [created, setCreated] = useState<Task | null>(null);
+  const [created, setCreated] = useState<CreateTaskResponse | null>(null);
 
   if (!skills.data || !developers.data) {
     const error = skills.error ?? developers.error;
@@ -30,9 +31,8 @@ export function TaskCreatePage() {
     e.preventDefault(); // no browser form post: we send JSON ourselves
     setCreated(null);
     create.mutate(toInput(draft), {
-      // runs after the hook's onSuccess, i.e. after ["tasks"] has refetched
-      onSuccess: (task) => {
-        setCreated(task);
+      onSuccess: (response) => {
+        setCreated(response); // { task, inference }
         setDraft(emptyDraft());
       },
     });
@@ -60,12 +60,16 @@ export function TaskCreatePage() {
       </header>
 
       {created && (
-        <p className="notice" role="status">
-          Created task #{created.id} “{created.title}”
-          {countTasks(created) > 1 ? ` with ${countTasks(created) - 1} subtasks` : ""}.{" "}
-          <a href={hrefFor("list")}>See it in the list</a>
-        </p>
+        <div role="status">
+          <p className="notice">
+            Created task #{created.task.id} “{created.task.title}”
+            {countTasks(created.task) > 1 ? ` with ${countTasks(created.task) - 1} subtasks` : ""}.{" "}
+            <a href={hrefFor("list")}>See it in the list</a>
+          </p>
+          <InferenceNote inference={created.inference} />
+        </div>
       )}
+
       {unclaimed && <FieldError id="new-form-error" message={describe(error)} onDismiss={dismiss} />}
 
       <form className="task-form" onSubmit={onSubmit}>
@@ -73,7 +77,7 @@ export function TaskCreatePage() {
         <TaskFields draft={draft} onChange={setDraft} prefix="" numbering="" ctx={ctx} />
 
         <button type="submit" className="primary" disabled={create.isPending}>
-          {create.isPending ? "Creating…" : total === 1 ? "Create task" : `Create ${total} tasks`}
+          {create.isPending ? "Creating (suggesting skills)…" : total === 1 ? "Create task" : `Create ${total} tasks`}
         </button>
       </form>
     </section>

@@ -34,6 +34,18 @@ export type CreateTaskInput = {
   subtasks?: CreateTaskInput[];
 };
 
+
+// POST /tasks -> { task, inference } (backend: InferenceReport in
+// services/tasks.service.ts, LlmFailure in llm/gemini.ts)
+export type LlmFailure = "no_key" | "timeout" | "api_error" | "empty" | "bad_json" | "bad_shape";
+export type InferredSkills = { path: string; title: string; skills: string[] }; // path "" = the root
+export type InferenceReport =
+  | { status: "skipped" } // every node had skills ticked
+  | { status: "ok"; inferred: InferredSkills[]; ms: number }
+  | { status: "failed"; reason: LlmFailure; ms: number }; // saved with no skills
+export type CreateTaskResponse = { task: Task; inference: InferenceReport };
+
+
 // Every error body (backend: errors.ts)
 export type ErrorCode =
   | "BAD_REQUEST"
