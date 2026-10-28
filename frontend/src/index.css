@@ -249,3 +249,55 @@ main {
   background: var(--card);
   border-left: 4px solid var(--done);
 }
+
+
+/* ---- recursive subtask editor (TaskFields) ---- */
+.task-node {
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0; /* a fieldset is min-content wide by default: deep trees would overflow */
+}
+.task-node > legend {
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+.task-node.subtask {
+  background: var(--bg);
+}
+.task-node.subtask .task-node.subtask {
+  background: var(--card); /* alternate per level so the nesting stays visible */
+}
+.subtask-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 0.6rem;
+  border-left: 2px solid var(--line);
+  display: grid;
+  gap: 0.75rem;
+}
+.node-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.node-actions button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+.node-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.node-actions .danger {
+  color: var(--error);
+}
