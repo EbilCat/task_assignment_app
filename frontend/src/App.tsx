@@ -1,122 +1,93 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useEffect, useState } from "react";
+import { api } from "./api/endpoints";
+import { ApiRequestError } from "./api/client";
+import type { Developer, Skill, Task } from "./api/types";
 
-function App() {
-  const [count, setCount] = useState(0)
+// A smoke-test page: proves browser -> Vite proxy -> Express -> Postgres works
+// and that errors arrive typed. The next lesson replaces the useEffect
+// loading below with TanStack Query.
+
+type Loaded = { tasks: Task[]; developers: Developer[]; skills: Skill[] };
+
+export default function App() {
+  const [data, setData] = useState<Loaded | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [probe, setProbe] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false; // StrictMode runs effects twice in dev; ignore the stale run
+    Promise.all([api.listTasks(), api.listDevelopers(), api.listSkills()])
+      .then(([tasks, developers, skills]) => {
+        if (!cancelled) setData({ tasks, developers, skills });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setLoadError(describe(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // A request the backend refuses (rule 1): Alice lacks Backend for task 3.
+  // Nothing is written, so it is safe to click as often as you like.
+  async function tryRefusedAssign() {
+    try {
+      await api.assignTask(3, 1);
+      setProbe("Unexpected: the backend accepted it");
+    } catch (err) {
+      setProbe(describe(err));
+    }
+  }
+
+  if (loadError) return <p role="alert">Could not load: {loadError}</p>;
+  if (!data) return <p>Loading…</p>;
+
+  const nameOf = (id: number | null) =>
+    id === null ? "unassigned" : (data.developers.find((d) => d.id === id)?.name ?? `#${id}`);
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <main>
+      <h1>Task Assignment</h1>
 
-      <div className="ticks"></div>
+      <h2>Tasks</h2>
+      <TaskTree tasks={data.tasks} nameOf={nameOf} />
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      <h2>Developers</h2>
+      <ul>
+        {data.developers.map((d) => (
+          <li key={d.id}>
+            {d.name} ({d.skills.join(", ") || "no skills"})
+          </li>
+        ))}
+      </ul>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      <h2>Skills</h2>
+      <p>{data.skills.map((s) => s.name).join(", ")}</p>
+
+      <h2>Error check</h2>
+      <button type="button" onClick={tryRefusedAssign}>
+        Assign Alice to task 3
+      </button>
+      {probe && <p>{probe}</p>}
+    </main>
+  );
 }
 
-export default App
+function TaskTree({ tasks, nameOf }: { tasks: Task[]; nameOf: (id: number | null) => string }) {
+  return (
+    <ul>
+      {tasks.map((t) => (
+        <li key={t.id}>
+          #{t.id} {t.title} · {t.status} · {nameOf(t.assigneeId)}
+          {t.skills.length > 0 && ` · [${t.skills.join(", ")}]`}
+          {t.subtasks.length > 0 && <TaskTree tasks={t.subtasks} nameOf={nameOf} />}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function describe(err: unknown): string {
+  if (err instanceof ApiRequestError) return `${err.code} (${err.status}): ${err.message}`;
+  return err instanceof Error ? err.message : String(err);
+}
