@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./endpoints";
-import type { TaskStatus } from "./types";
+import type { CreateTaskInput, TaskStatus } from "./types";
 
 // Every cache key in one place. Keys are arrays, matched by PREFIX:
 // invalidating ["tasks"] also hits ["tasks", 3, "qualified-developers"].
@@ -54,6 +54,18 @@ export function useSetStatus() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ taskId, status }: { taskId: number; status: TaskStatus }) => api.setStatus(taskId, status),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
+  });
+}
+
+
+// ...
+// POST /tasks. A new task changes the tree, so refresh ["tasks"]. The new
+// Task comes back as mutation.data (and in mutate's own onSuccess).
+export function useCreateTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateTaskInput) => api.createTask(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
   });
 }

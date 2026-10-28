@@ -157,3 +157,95 @@ main {
   cursor: pointer;
   padding: 0 0.25rem;
 }
+.app-nav {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 0.75rem 1rem 0;
+  display: flex;
+  gap: 1.25rem;
+}
+.app-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.25rem 0;
+  border-bottom: 2px solid transparent;
+}
+.app-nav a[aria-current="page"] {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--doing);
+}
+
+.task-form {
+  display: grid;
+  gap: 1rem;
+  max-width: 36rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.field.wide {
+  max-width: none;
+}
+.field input {
+  font: inherit;
+  padding: 0.3rem 0.4rem;
+}
+.field input[aria-invalid="true"] {
+  outline: 2px solid var(--error);
+}
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.skill-picker {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+.skill-picker legend {
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 0 0.25rem;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.hint,
+.skill-picker .field-error {
+  flex-basis: 100%;
+}
+.hint {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.primary {
+  justify-self: start;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.45rem 1rem;
+  border: 1px solid var(--doing);
+  border-radius: 6px;
+  background: var(--doing);
+  color: #fff;
+  cursor: pointer;
+}
+.primary:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.notice {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--card);
+  border-left: 4px solid var(--done);
+}
