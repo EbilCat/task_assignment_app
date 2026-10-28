@@ -1,60 +1,49 @@
-import { useEffect, useState } from "react";
-import { api } from "./api/endpoints";
 import { ApiRequestError } from "./api/client";
-import type { Developer, Skill, Task } from "./api/types";
+import { useAssignTask, useDevelopers, useSetStatus, useSkills, useTasks } from "./api/queries";
+import type { Task } from "./api/types";
 
-// A smoke-test page: proves browser -> Vite proxy -> Express -> Postgres works
-// and that errors arrive typed. The next lesson replaces the useEffect
-// loading below with TanStack Query.
-
-type Loaded = { tasks: Task[]; developers: Developer[]; skills: Skill[] };
+// Still a smoke page, now on TanStack Query: three cached reads and two
+// mutations that refresh the tree. The Task List page (next lesson)
+// replaces the buttons with a real assignee dropdown and status select.
 
 export default function App() {
-  const [data, setData] = useState<Loaded | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [probe, setProbe] = useState<string | null>(null);
+  const tasks = useTasks();
+  const developers = useDevelopers();
+  const skills = useSkills();
+  const assign = useAssignTask();
+  const setStatus = useSetStatus();
 
-  useEffect(() => {
-    let cancelled = false; // StrictMode runs effects twice in dev; ignore the stale run
-    Promise.all([api.listTasks(), api.listDevelopers(), api.listSkills()])
-      .then(([tasks, developers, skills]) => {
-        if (!cancelled) setData({ tasks, developers, skills });
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setLoadError(describe(err));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const taskList = tasks.data;
+  const devList = developers.data;
+  const skillList = skills.data;
 
-  // A request the backend refuses (rule 1): Alice lacks Backend for task 3.
-  // Nothing is written, so it is safe to click as often as you like.
-  async function tryRefusedAssign() {
-    try {
-      await api.assignTask(3, 1);
-      setProbe("Unexpected: the backend accepted it");
-    } catch (err) {
-      setProbe(describe(err));
-    }
+  // Only block the page when there is nothing to show yet. A failed
+  // BACKGROUND refetch keeps the old data, so we keep rendering it.
+  if (!taskList || !devList || !skillList) {
+    const error = tasks.error ?? developers.error ?? skills.error;
+    return error ? <p role="alert">Could not load: {describe(error)}</p> : <p>Loading…</p>;
   }
 
-  if (loadError) return <p role="alert">Could not load: {loadError}</p>;
-  if (!data) return <p>Loading…</p>;
-
   const nameOf = (id: number | null) =>
-    id === null ? "unassigned" : (data.developers.find((d) => d.id === id)?.name ?? `#${id}`);
+    id === null ? "unassigned" : (devList.find((d) => d.id === id)?.name ?? `#${id}`);
+  const busy = assign.isPending || setStatus.isPending;
 
   return (
     <main>
       <h1>Task Assignment</h1>
+      <p>
+        <small>
+          {tasks.isFetching ? "Refreshing tasks…" : "Tasks up to date"}
+          {tasks.error && ` · last refresh failed: ${describe(tasks.error)}`}
+        </small>
+      </p>
 
       <h2>Tasks</h2>
-      <TaskTree tasks={data.tasks} nameOf={nameOf} />
+      <TaskTree tasks={taskList} nameOf={nameOf} />
 
       <h2>Developers</h2>
       <ul>
-        {data.developers.map((d) => (
+        {devList.map((d) => (
           <li key={d.id}>
             {d.name} ({d.skills.join(", ") || "no skills"})
           </li>
@@ -62,13 +51,32 @@ export default function App() {
       </ul>
 
       <h2>Skills</h2>
-      <p>{data.skills.map((s) => s.name).join(", ")}</p>
+      <p>{skillList.map((s) => s.name).join(", ")}</p>
 
-      <h2>Error check</h2>
-      <button type="button" onClick={tryRefusedAssign}>
-        Assign Alice to task 3
-      </button>
-      {probe && <p>{probe}</p>}
+      <h2>Mutation check</h2>
+      <p>
+        <button type="button" disabled={busy} onClick={() => setStatus.mutate({ taskId: 4, status: "Done" })}>
+          Mark #4 Done
+        </button>{" "}
+        <button type="button" disabled={busy} onClick={() => setStatus.mutate({ taskId: 4, status: "To Do" })}>
+          Reopen #4
+        </button>{" "}
+        <button type="button" disabled={busy} onClick={() => setStatus.mutate({ taskId: 1, status: "Done" })}>
+          Mark #1 Done
+        </button>{" "}
+        <button type="button" disabled={busy} onClick={() => assign.mutate({ taskId: 3, assigneeId: 1 })}>
+          Assign Alice to #3
+        </button>
+      </p>
+      {setStatus.isPending && <p>Saving…</p>}
+      {setStatus.isSuccess && (
+        <p>
+          Saved: #{setStatus.data.id} is now {setStatus.data.status}
+        </p>
+      )}
+      {setStatus.error && <p role="alert">{describe(setStatus.error)}</p>}
+      {assign.error && <p role="alert">{describe(assign.error)}</p>}
+      {assign.isSuccess && <p>Unexpected: the backend accepted it</p>}
     </main>
   );
 }
