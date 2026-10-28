@@ -1,18 +1,159 @@
-/* Replaces the create-vite demo styles. Plain on purpose: real styling
-   comes with the Task List page. */
+/* Small, plain styles for the Task List. Colours are variables so light
+   and dark mode both work (the browser picks via prefers-color-scheme). */
 :root {
   font-family: system-ui, sans-serif;
   line-height: 1.5;
   color-scheme: light dark;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --text: #1c2230;
+  --muted: #5d6577;
+  --line: #d9dde5;
+  --chip: #e8ecf4;
+  --todo: #8a93a6;
+  --doing: #2f6fd6;
+  --done: #2e8b57;
+  --error: #c0392b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171d;
+    --card: #1d2129;
+    --text: #e6e9ef;
+    --muted: #9aa3b5;
+    --line: #313744;
+    --chip: #2a303b;
+    --todo: #8a93a6;
+    --doing: #6b9cf0;
+    --done: #5cc08a;
+    --error: #ff7b6e;
+  }
 }
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--text);
 }
 main {
-  max-width: 48rem;
+  max-width: 52rem;
   margin: 0 auto;
   padding: 1.5rem 1rem;
 }
-ul ul {
-  margin-block: 0.25rem;
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.page-head h1 {
+  margin: 0;
+}
+.sync {
+  color: var(--muted);
+}
+
+.task-tree,
+.subtasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+.task-tree {
+  margin-top: 1rem;
+}
+.subtasks {
+  margin: 0.5rem 0 0 1rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+}
+
+.task-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 0.75rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--todo);
+  border-radius: 6px;
+}
+.task[data-status="In Progress"] > .task-card {
+  border-left-color: var(--doing);
+}
+.task[data-status="Done"] > .task-card {
+  border-left-color: var(--done);
+}
+.task-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+.task-id {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.task-title {
+  font-weight: 600;
+}
+.skills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.chip {
+  font-size: 0.75rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--chip);
+}
+.chip-muted {
+  color: var(--muted);
+}
+
+.task-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.field {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 10rem;
+  max-width: 18rem;
+}
+.field label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.field select {
+  font: inherit;
+  padding: 0.3rem 0.4rem;
+}
+.field select[aria-invalid="true"] {
+  outline: 2px solid var(--error);
+}
+.field-error {
+  margin: 0;
+  display: flex;
+  gap: 0.25rem;
+  align-items: flex-start;
+  font-size: 0.8rem;
+  color: var(--error);
+}
+.dismiss {
+  font: inherit;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 0.25rem;
 }
