@@ -17,4 +17,11 @@ function required(name: string): string {
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   databaseUrl: required("DATABASE_URL"),
+  // Optional on purpose: without a key the app still starts, and skill
+  // inference reports "no_key" instead of crashing the server.
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || null,
+    model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
+    timeoutMs: Number(process.env.GEMINI_TIMEOUT_MS ?? 8000),
+  },
 };

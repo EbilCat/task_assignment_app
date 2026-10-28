@@ -16,6 +16,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@google/genai": "^2.31.0",
     "express": "^5.1.0",
     "pg": "^8.13.0",
     "zod": "^4.1.0"
