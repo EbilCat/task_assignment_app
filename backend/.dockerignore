@@ -1,0 +1,11 @@
+node_modules
+dist
+test
+coverage
+vitest.config.ts
+tsconfig.test.json
+*.log
+.env
+.env.*
+Dockerfile
+.dockerignore
